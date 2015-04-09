@@ -31,6 +31,14 @@ static EGLContext context;
 static EGLSurface surface;
 #endif
 
+// Zero is different on different architectures
+// It's 127 for NVidia PC and 128 for ARM Mali
+#ifdef USEGLX
+#define UZERO 127
+#else
+#define UZERO 128
+#endif
+
 enum {OUT_DEFAULT, OUT_BYTE, OUT_INTEGER, OUT_FLOAT};
 
 static int loops = 1, simplefilter, simpleinput, nocheck, printoutput;
@@ -628,7 +636,7 @@ int ReadFrameByte(GLSTATUS *gls, OUTPUTS *out, int filter)
 			for(mw = 0; mw < gls->mw; mw++)
 				for(x = 0; x < out->width; x++)
 					out->data[(((mh * gls->mw + mw) * out->nfilters + filter) * out->height + y) * out->width + x] =
-						(frame[(mh * gls->oh + y) * stride + mw * gls->ow + x]-127) * (1.0f/64.0f);
+						(frame[(mh * gls->oh + y) * stride + mw * gls->ow + x]-UZERO) * (1.0f/64.0f);
 	free(frame);
 	return 0;
 }
@@ -703,7 +711,7 @@ int ReadFrameByteQuadInputs(GLSTATUS *gls, OUTPUTS *out, int filter)
 				for(x = 0; x < out->width; x++)
 					for(c = 0; c < 4; c++)
 						out->data[((((mh * gls->mw + mw) * 4 + c) * out->nfilters + filter) * out->height + y) * out->width + x] =
-							(frame[(mh * gls->oh + y) * gls->ostride + (mw * gls->ow + x) * 4 + c]-127) * (1.0f/64.0f);
+							(frame[(mh * gls->oh + y) * gls->ostride + (mw * gls->ow + x) * 4 + c]-UZERO) * (1.0f/64.0f);
 	free(frame);
 	return 0;
 }

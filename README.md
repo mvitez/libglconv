@@ -88,7 +88,7 @@ output plane and the OpenGL drawing is started nOutputPlanes times,
 creating nOutputPlanes different outputs. In each step, the filter input
 is changed. This algorithm is the slowest.
 
-Both the input and output can be or byte (fixed Q2.5) or float.
+Both the input and output can be or byte (fixed Q2.6) or float.
 Intermediate calculations are performed in the GPU with medium or high
 precision.
 
@@ -141,8 +141,8 @@ Parameters:
 
 - Precision, which can be
 
-- 0 byte precision (Q2.5) with internal calculations using medium float precision
-- 1 byte precision (Q2.5) with internal calculations using high float precision
+- 0 byte precision (Q2.6) with internal calculations using medium float precision
+- 1 byte precision (Q2.6) with internal calculations using high float precision
 - 2 medium float precision
 - 3 high float precision
 
