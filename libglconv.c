@@ -7,6 +7,7 @@
 #include <math.h>
 #include <locale.h>
 #include <sys/time.h>
+#include <pthread.h>
 #ifdef USEOMP
 #	include <omp.h>
 #endif
@@ -1096,9 +1097,14 @@ int CreateRenderBuffer(GLSTATUS *gls, int w, int h)
 	return 0;
 }
 
-int Draw(GLSTATUS *gls, INPUTS *inputs, FILTERS *filters, OUTPUTS *outputs)
+static double sec[4];
+static int loc, biasloc;
+static GLfloat vVertices[20];
+	
+int Draw1(GLSTATUS *gls, INPUTS *inputs, FILTERS *filters, OUTPUTS *outputs)
 {
-	GLfloat vVertices[] = { -1.0f,  1.0f, 0.0f,  // Position 0
+	int i;
+	const GLfloat def_vVertices[] = { -1.0f,  1.0f, 0.0f,  // Position 0
 							0.0f,  1.0f,        // TexCoord 0
 							-1.0f, -1.0f, 0.0f,  // Position 1
 							0.0f,  0.0f,        // TexCoord 1
@@ -1107,9 +1113,6 @@ int Draw(GLSTATUS *gls, INPUTS *inputs, FILTERS *filters, OUTPUTS *outputs)
 							1.0f,  1.0f, 0.0f,  // Position 3
 							1.0f,  1.0f         // TexCoord 3
 							};
-	GLushort indices[] = { 0, 1, 2, 0, 2, 3 };
-	int loc, biasloc, filter, i;
-	double sec[4];
 
 	if(checkGlError("start"))
 		return -1;
@@ -1166,6 +1169,7 @@ int Draw(GLSTATUS *gls, INPUTS *inputs, FILTERS *filters, OUTPUTS *outputs)
 	// Adjust the texture coordinates for the interpolator to return the real texel coordinates
 	float wmax = (float)gls->otw*filters->step / gls->tw;
 	float hmax = (float)gls->oth*filters->step / gls->th;
+	memcpy(vVertices, def_vVertices, sizeof(def_vVertices));
 	vVertices[4] = hmax;
 	vVertices[5*2 + 3] = wmax;
 	vVertices[5*3 + 3] = wmax;
@@ -1197,6 +1201,14 @@ int Draw(GLSTATUS *gls, INPUTS *inputs, FILTERS *filters, OUTPUTS *outputs)
 	lprintf("Running convolutions\n");
 	sec[1] = seconds();
 	times[0] += sec[1] - sec[0];
+	return 0;
+}
+
+int Draw2(GLSTATUS *gls, INPUTS *inputs, FILTERS *filters, OUTPUTS *outputs)
+{
+	GLushort indices[] = { 0, 1, 2, 0, 2, 3 };
+	int filter;
+
 	for(filter = 0; filter < filters->nfilters; filter++)
 	{
 		sec[0] = seconds();
@@ -1258,6 +1270,13 @@ int Draw(GLSTATUS *gls, INPUTS *inputs, FILTERS *filters, OUTPUTS *outputs)
 	if(printoutput == 1)
 		PrintNonZero(outputs, "GPU");
 	return 0;
+}
+
+int Draw(GLSTATUS *gls, INPUTS *inputs, FILTERS *filters, OUTPUTS *outputs)
+{
+	if(Draw1(gls, inputs, filters, outputs))
+		return -1;
+	return Draw2(gls, inputs, filters, outputs);
 }
 
 ///
@@ -1524,8 +1543,19 @@ int main (int argc, char *argv[])
 #ifndef NOLIB
 // This is used to keep existing initializations if possible
 static int glinit, curfsize, curtw, curth;
+static pthread_t asyncconv_tid;
+static INPUTS i_;
+static FILTERS f_;
+static OUTPUTS o_;
 
-static int conv(lua_State *L)
+void *asyncconv_thread(void *dummy)
+{
+	if(Draw(&gls, &i_, &f_, &o_))
+		return (void *)-1;
+	return 0;
+}
+
+static int conv(lua_State *L, int async)
 {
 	setlocale(LC_NUMERIC, "C");
 	if(!luaT_typename(L, 1) ||
@@ -1544,9 +1574,9 @@ static int conv(lua_State *L)
 	if(t_f->size[2] != t_f->size[3])
 		luaL_error(L, "<glconv>: only square filters supported");
 	
-	INPUTS i_, *i = &i_;
-	FILTERS f_, *f = &f_;
-	OUTPUTS o_, *o = &o_;
+	INPUTS *i = &i_;
+	FILTERS *f = &f_;
+	OUTPUTS *o = &o_;
 	GLSTATUS *g = &gls;
 	
 	if(t_i->nDimension == 3)
@@ -1639,7 +1669,12 @@ static int conv(lua_State *L)
 	}
 	Gops = 1e-9 * f->nfilters * i->nimages * i->nplanes * o->width * o->height * f->size * f->size * 2;
 	times[0] = times[1] = times[2] = 0;
-	if(Draw(&gls, i, f, o))
+	if(Draw1(&gls, i, f, o))
+		luaL_error(L, "<glconv>: Error drawing");
+	if(async)
+	{
+		pthread_create(&asyncconv_tid, 0, asyncconv_thread, 0);
+	} else if(Draw2(&gls, i, f, o))
 		luaL_error(L, "<glconv>: Error drawing");
 	return 0;
 }
@@ -1690,12 +1725,37 @@ static int clear(lua_State *L)
 	return 0;
 }
 
+int syncconv(lua_State *L)
+{
+	return conv(L, 0);
+}
+
+int asyncconv(lua_State *L)
+{
+	return conv(L, 1);
+}
+
+int waitconv(lua_State *L)
+{
+	if(asyncconv_tid)
+	{
+		void *status;
+		pthread_join(asyncconv_tid, &status);
+		asyncconv_tid = 0;
+		if(status)
+			luaL_error(L, "<glconv>: Error drawing\n");
+	} else luaL_error(L, "<glconv>: call asyncconv first");
+	return 0;
+}
+
 static const struct luaL_reg libglconv[] = {
 	{"logging", setlogging},
 	{"clear", clear},
 	{"precision", setprecision},
 	{"useintp", useintp},
-	{"conv", conv},
+	{"conv", syncconv},
+	{"asyncconv", asyncconv},
+	{"waitconv", waitconv},
 	{NULL, NULL}
 };
 
